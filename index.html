@@ -654,7 +654,7 @@
               <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <i class="fa-solid fa-fire text-red-500"></i> Top 15 OLT ที่มีปัญหาซ้ำซากสูงสุด
               </h3>
-              <p class="text-xs text-slate-500">สถิติตั๋วขัดข้องถี่ที่สุดในรอบ 2 เดือน (สูงสุด 47 ครั้ง)</p>
+              <p class="text-xs text-slate-500">สถิติตั๋วขัดข้องถี่ที่สุดในรอบ 2 เดือน (สูงสุด 47 ครั้ง - คลิกที่แท่งเพื่อดูประวัติ)</p>
             </div>
             <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900">
               Watchlist
@@ -671,7 +671,7 @@
               <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <i class="fa-solid fa-chart-line text-blue-600"></i> แนวโน้มการเกิดปัญหาซ้ำรายสัปดาห์
               </h3>
-              <p class="text-xs text-slate-500">สถิติ 8 สัปดาห์ย้อนหลัง (ส.ค. - ต.ค. 2026)</p>
+              <p class="text-xs text-slate-500">สถิติ 10 สัปดาห์ย้อนหลัง (ส.ค. - ต.ค. 2026)</p>
             </div>
           </div>
           <div class="relative min-h-[320px]">
@@ -941,9 +941,55 @@
   <!-- Core Dashboard & Presentation Logic -->
   <script>
     const rawData = JSON.parse(document.getElementById('oltData').textContent);
-    const olts = rawData.all_repeat_olts || rawData.olts || [];
+    const rawOlts = rawData.all_repeat_olts || rawData.olts || [];
     const meta = rawData.metadata || {};
     const subcauses = rawData.sub_causes || {};
+
+    // Normalize OLT records to ensure compatibility across all dashboard widgets
+    const olts = rawOlts.map(o => {
+      const ciCode = o.ci || o.ciname || 'UNKNOWN';
+      const totDowntime = o.total_downtime || 0;
+      const avgDowntime = o.avg_downtime || 0;
+      const topCauses = o.top_causes || [];
+      const primarySub = (topCauses.length > 0 && topCauses[0]) ? topCauses[0][0] : (o.primary_subcause || '-');
+      const recAction = o.recommendation || o.recommended_action || '-';
+      return {
+        ...o,
+        ci: ciCode,
+        ciname: ciCode,
+        vendor: o.vendor || 'Unknown',
+        model: o.model || 'Unknown',
+        region: o.region || 'Unspecified',
+        province: o.province || 'Unspecified',
+        district: o.district || '-',
+        subdistrict: o.subdistrict || '-',
+        total_tickets: o.total_tickets || 0,
+        total_downtime: totDowntime,
+        total_downtime_hours: Math.round(totDowntime / 60),
+        avg_downtime: avgDowntime,
+        avg_downtime_hours: (avgDowntime / 60).toFixed(1),
+        lat: parseFloat(o.lat) || 0,
+        lon: parseFloat(o.lng || o.lon) || 0,
+        lng: parseFloat(o.lng || o.lon) || 0,
+        power_tickets: o.power_tickets || 0,
+        fiber_tickets: o.fiber_tickets || 0,
+        soft_tickets: o.soft_tickets || o.bug_tickets || 0,
+        bug_tickets: o.soft_tickets || o.bug_tickets || 0,
+        auto_tickets: o.auto_tickets || 0,
+        other_tickets: o.other_tickets || 0,
+        primary_subcause: primarySub,
+        recommended_action: recAction,
+        recommendation: recAction,
+        tickets: (o.tickets || []).map(t => ({
+          ticket_id: t.id || t.ticket_id || '-',
+          start_time: t.date || t.start_time || '-',
+          end_time: t.end_time || '-',
+          downtime_mins: t.downtime || t.downtime_mins || 0,
+          category: t.cat || t.category || '-',
+          subcause: t.sub_cause || t.subcause || '-'
+        }))
+      };
+    });
 
     // State
     let currentSlide = 0;
@@ -1383,55 +1429,192 @@
         }
       });
 
-      // Top Chronic Chart
+      // Top Chronic Chart (Stacked Bar with cause breakdown and modal trigger)
       const topChronic = olts.slice(0, 15);
       new Chart(document.getElementById('topChronicChart'), {
         type: 'bar',
         data: {
           labels: topChronic.map(o => o.ciname),
-          datasets: [{
-            label: 'ตั๋วซ้ำ (ครั้ง)',
-            data: topChronic.map(o => o.total_tickets),
-            backgroundColor: '#ef4444',
-            borderRadius: 6
-          }]
+          datasets: [
+            {
+              label: 'ไฟดับ (Power)',
+              data: topChronic.map(o => o.power_tickets),
+              backgroundColor: '#f59e0b',
+              borderRadius: 3
+            },
+            {
+              label: 'สายไฟเบอร์ขาด (Fiber)',
+              data: topChronic.map(o => o.fiber_tickets),
+              backgroundColor: '#ef4444',
+              borderRadius: 3
+            },
+            {
+              label: 'ฟื้นตัวอัตโนมัติ (Auto)',
+              data: topChronic.map(o => o.auto_tickets),
+              backgroundColor: '#06b6d4',
+              borderRadius: 3
+            },
+            {
+              label: 'Bug Software',
+              data: topChronic.map(o => o.bug_tickets),
+              backgroundColor: '#8b5cf6',
+              borderRadius: 3
+            },
+            {
+              label: 'อื่นๆ (Others)',
+              data: topChronic.map(o => o.other_tickets),
+              backgroundColor: '#94a3b8',
+              borderRadius: 3
+            }
+          ]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
+          interaction: { mode: 'index', intersect: false },
+          onClick: (e, activeEls) => {
+            if (activeEls && activeEls.length > 0) {
+              const idx = activeEls[0].index;
+              openModal(topChronic[idx].ciname);
+            }
+          },
+          plugins: {
+            legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } },
+            tooltip: {
+              callbacks: {
+                title: function(items) {
+                  const idx = items[0].dataIndex;
+                  const item = topChronic[idx];
+                  return `${item.ciname} (${item.vendor} ${item.model})`;
+                },
+                afterTitle: function(items) {
+                  const idx = items[0].dataIndex;
+                  const item = topChronic[idx];
+                  return `สถานที่: ${item.province} - ${item.district} (${item.region})`;
+                },
+                footer: function(items) {
+                  const idx = items[0].dataIndex;
+                  const item = topChronic[idx];
+                  return `รวมตั๋วขัดข้อง: ${item.total_tickets} ครั้ง | เวลาระบบล่ม: ${item.total_downtime_hours.toLocaleString()} ชม. (คลิกเพื่อดูรายละเอียดตั๋ว)`;
+                }
+              }
+            }
+          },
           scales: {
-            y: { beginAtZero: true, grid: { color: isDark ? '#1e293b' : '#f1f5f9' } },
-            x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 45, minRotation: 45, font: { size: 10 } } }
+            x: {
+              stacked: true,
+              grid: { display: false },
+              ticks: { autoSkip: false, maxRotation: 45, minRotation: 45, font: { size: 10, weight: 'bold' } }
+            },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              grid: { color: isDark ? '#1e293b' : '#f1f5f9' },
+              title: { display: true, text: 'จำนวนตั๋วขัดข้อง (ครั้ง)', font: { size: 11 } }
+            }
           }
         }
       });
 
-      // Trend Chart
+      // Trend Chart (Weekly Trend with Total Line and Category Curves)
       const weekly = rawData.weekly_trends || rawData.weekly_trend || {};
       const wLabels = Object.keys(weekly).sort();
-      const wData = wLabels.map(k => weekly[k]);
+      const wTotal = wLabels.map(k => {
+        const val = weekly[k];
+        if (typeof val === 'number') return val;
+        return Object.values(val || {}).reduce((acc, v) => acc + (typeof v === 'number' ? v : 0), 0);
+      });
+      const wPower = wLabels.map(k => (typeof weekly[k] === 'object' ? (weekly[k]['ไฟดับ (Power Outage)'] || 0) : 0));
+      const wFiber = wLabels.map(k => (typeof weekly[k] === 'object' ? (weekly[k]['สายไฟเบอร์ขาด (Fiber Cut)'] || 0) : 0));
+      const wAuto = wLabels.map(k => (typeof weekly[k] === 'object' ? (weekly[k]['การฟื้นตัวอัตโนมัติ (Auto-Recovered/Flapping)'] || 0) : 0));
+      const wBug = wLabels.map(k => (typeof weekly[k] === 'object' ? (weekly[k]['Bug จาก Software / Firmware'] || 0) : 0));
+
       new Chart(document.getElementById('trendChart'), {
         type: 'line',
         data: {
-          labels: wLabels,
-          datasets: [{
-            label: 'จำนวนตั๋ว/สัปดาห์',
-            data: wData,
-            borderColor: '#0284c7',
-            backgroundColor: 'rgba(2, 132, 199, 0.1)',
-            fill: true,
-            tension: 0.3,
-            pointRadius: 4
-          }]
+          labels: wLabels.map(w => w.replace('2026-', '')),
+          datasets: [
+            {
+              label: 'รวมทุกสาเหตุ',
+              data: wTotal,
+              borderColor: '#0284c7',
+              backgroundColor: 'rgba(2, 132, 199, 0.12)',
+              fill: true,
+              tension: 0.3,
+              pointRadius: 4,
+              borderWidth: 2.5
+            },
+            {
+              label: 'ไฟดับ (Power)',
+              data: wPower,
+              borderColor: '#f59e0b',
+              backgroundColor: 'transparent',
+              borderDash: [4, 4],
+              tension: 0.3,
+              pointRadius: 3,
+              borderWidth: 1.5
+            },
+            {
+              label: 'สายไฟเบอร์ขาด (Fiber)',
+              data: wFiber,
+              borderColor: '#ef4444',
+              backgroundColor: 'transparent',
+              borderDash: [4, 4],
+              tension: 0.3,
+              pointRadius: 3,
+              borderWidth: 1.5
+            },
+            {
+              label: 'ฟื้นตัวอัตโนมัติ (Auto)',
+              data: wAuto,
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              borderDash: [4, 4],
+              tension: 0.3,
+              pointRadius: 3,
+              borderWidth: 1.5
+            },
+            {
+              label: 'Bug Software',
+              data: wBug,
+              borderColor: '#8b5cf6',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              pointRadius: 3,
+              borderWidth: 1.5
+            }
+          ]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: { boxWidth: 10, font: { size: 10 } }
+            },
+            tooltip: {
+              callbacks: {
+                footer: function(items) {
+                  let sum = 0;
+                  items.forEach(function(item) {
+                    if (item.datasetIndex !== 0) sum += item.parsed.y;
+                  });
+                  return `ตั๋วจำแนกสาเหตุ: ${sum} ครั้ง`;
+                }
+              }
+            }
+          },
           scales: {
-            y: { beginAtZero: false, grid: { color: isDark ? '#1e293b' : '#f1f5f9' } },
-            x: { grid: { display: false } }
+            y: {
+              beginAtZero: true,
+              grid: { color: isDark ? '#1e293b' : '#f1f5f9' },
+              title: { display: true, text: 'จำนวนตั๋วขัดข้อง (ครั้ง)', font: { size: 11 } }
+            },
+            x: {
+              grid: { display: false }
+            }
           }
         }
       });
